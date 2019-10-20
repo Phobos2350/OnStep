@@ -6,7 +6,8 @@
 void initStartupValues() {
   
   // Basic stepper driver mode setup
-  // if we made through validation and AXIS1_DRIVER_MODEL exists; AXIS2_DRIVER_MODEL, AXIS1_DRIVER_MICROSTEPS, and AXIS2_DRIVER_MICROSTEPS also exist and passed validation in the pre-processor
+  // if we made through validation and AXIS1_DRIVER_MODEL exists; AXIS2_DRIVER_MODEL, AXIS1_DRIVER_MICROSTEPS,
+  // and AXIS2_DRIVER_MICROSTEPS also exist and passed validation in the pre-processor
 #if AXIS1_DRIVER_MODEL != OFF
   // translate microsteps to microstep bit code
   AXIS1_DRIVER_MICROSTEP_CODE = translateMicrosteps(1, AXIS1_DRIVER_MODEL, AXIS1_DRIVER_MICROSTEPS);
@@ -17,6 +18,15 @@ void initStartupValues() {
   #if AXIS2_DRIVER_MICROSTEPS_GOTO != OFF
     AXIS2_DRIVER_MICROSTEP_CODE_GOTO = translateMicrosteps(2, AXIS2_DRIVER_MODEL, AXIS2_DRIVER_MICROSTEPS_GOTO);
   #endif
+#endif
+#if AXIS3_DRIVER_MODEL != OFF
+  AXIS3_DRIVER_MICROSTEP_CODE = translateMicrosteps(3, AXIS3_DRIVER_MODEL, AXIS3_DRIVER_MICROSTEPS);
+#endif
+#if AXIS4_DRIVER_MODEL != OFF
+  AXIS4_DRIVER_MICROSTEP_CODE = translateMicrosteps(4, AXIS4_DRIVER_MODEL, AXIS4_DRIVER_MICROSTEPS);
+#endif
+#if AXIS5_DRIVER_MODEL != OFF
+  AXIS5_DRIVER_MICROSTEP_CODE = translateMicrosteps(5, AXIS5_DRIVER_MODEL, AXIS5_DRIVER_MICROSTEPS);
 #endif
 
   // initialize some fixed-point values
@@ -110,7 +120,7 @@ void initPins() {
 // ------------------------------------------------------------------
 // User feedback
 
-#if LED_STATUS_PIN == ON
+#if LED_STATUS == ON
   pinMode(LEDnegPin,OUTPUT); digitalWrite(LEDnegPin,LOW);  // light status LED (provides GND)
   #ifdef LEDposPin
     pinMode(LEDposPin,OUTPUT); digitalWrite(LEDposPin,HIGH); // sometimes +5v is provided on a pin
@@ -118,25 +128,25 @@ void initPins() {
   ledOn=true;
 #endif
 
-#if LED_STATUS_PIN >= 0
+#if LED_STATUS >= 0
   pinMode(LEDnegPin,OUTPUT); digitalWrite(LEDnegPin,LOW);  // light status LED (provides pwm'd GND for polar reticule)
   #ifdef LEDposPin
     pinMode(LEDposPin,OUTPUT); digitalWrite(LEDposPin,HIGH); // sometimes +5v is provided on a pin
   #endif
-  analogWrite(LEDnegPin,LED_STATUS_PIN);
+  analogWrite(LEDnegPin,LED_STATUS);
   ledOn=true;
 #endif
 
-#if LED_RETICLE_PIN >= 0
+#if LED_RETICLE >= 0
   pinMode(ReticlePin,OUTPUT); analogWrite(ReticlePin,reticuleBrightness); // light reticule LED
 #endif
 
-#if LED_STATUS2_PIN == ON
+#if LED_STATUS2 == ON
   pinMode(LEDneg2Pin,OUTPUT); digitalWrite(LEDneg2Pin,HIGH); // light second status LED (provides just GND)
   led2On=false;
-#elif LED_STATUS2_PIN >= 0
+#elif LED_STATUS2 >= 0
   pinMode(LEDneg2Pin,OUTPUT); digitalWrite(LEDneg2Pin,LOW); // light second status LED (provides pwm'd GND for polar reticule)
-  analogWrite(LEDneg2Pin,LED_STATUS2_PIN);
+  analogWrite(LEDneg2Pin,LED_STATUS2);
 #endif
 
 // ready the sound/buzzer pin
@@ -291,16 +301,18 @@ void initReadNvValues() {
   backlashAxis2=nv.readInt(EE_backlashAxis2);
   backlashAxis1=nv.readInt(EE_backlashAxis1);
   
+#if MOUNT_TYPE != ALTAZM
   // get the PEC status
   pecStatus  =nv.read(EE_pecStatus);
   pecRecorded=nv.read(EE_pecRecorded); if (!pecRecorded) pecStatus=IgnorePEC;
   for (int i=0; i < pecBufferSize; i++) pecBuffer[i]=nv.read(EE_pecTable+i);
   wormSensePos=nv.readLong(EE_wormSensePos);
-#if PEC_SENSE == OFF
-  wormSensePos=0;
-  pecStatus=IgnorePEC;
+  #if PEC_SENSE == OFF
+    wormSensePos=0;
+    pecStatus=IgnorePEC;
+  #endif
 #endif
-  
+
   // get the Park status
   parkSaved=nv.read(EE_parkSaved);
   parkStatus=nv.read(EE_parkStatus);
@@ -344,14 +356,6 @@ void initReadNvValues() {
   // set the default guide rate
   setGuideRate(GuideRateDefault);
   enableGuideRate(GuideRateDefault);
-
-  // for DC focusers read in the % power
-#if AXIS4_DRIVER_DC_MODE != OFF
-  dcPwrAxis4=nv.read(EE_dcPwrAxis4);
-#endif
-#if AXIS5_DRIVER_DC_MODE != OFF
-  dcPwrAxis5=nv.read(EE_dcPwrAxis5);
-#endif
 
 }
 
@@ -439,12 +443,13 @@ void initWriteNvValues() {
     nv.writeLong(EE_posAxis4,0L);
     nv.writeLong(EE_posAxis5,0L);
     // for DC focusers read in the % power
-#if AXIS4_DRIVER_DC_MODE != OFF
     nv.write(EE_dcPwrAxis4,50);
-#endif
-#if AXIS5_DRIVER_DC_MODE != OFF
     nv.write(EE_dcPwrAxis5,50);
-#endif
+    // clear focuser TCF values
+    nv.writeFloat(EE_tcfCoefAxis4,0.0);
+    nv.writeFloat(EE_tcfCoefAxis5,0.0);
+    nv.write(EE_tcfEnAxis4,0);
+    nv.write(EE_tcfEnAxis5,0);
 
     // clear the library/catalogs
     Lib.clearAll();

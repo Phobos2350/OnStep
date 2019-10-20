@@ -14,20 +14,26 @@
 #define TMC2209_VQUIET 122
 
 // Models
-#define DRIVER_MODEL_FIRST 1
-#define A4988   1
-#define DRV8825 2
-#define S109    3
-#define LV8729  4
-#define RAPS128 5
-#define TMC2100 6
-#define TMC2208 7
-#define TMC2209 8
-#define ST820   9
-#define TMC_SPI 10
-#define DRIVER_MODEL_LAST 10
+#define DRIVER_MODEL_FIRST 2
+#define A4988    2  // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x
+#define DRV8825  3  // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x,32x
+#define S109     4  // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x,32x
+#define LV8729   5  // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x,32x,64x,128x
+#define RAPS128  6  // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x,32x,64x,128x
+#define TMC2100  7  // step/dir stepper driver with EN LOW.  allows M0,M1    bit patterens for 1x,2x,4x,16x   (spreadCycle only, no 256x intpol)
+#define TMC2208  8  // step/dir stepper driver with EN LOW.  allows M0,M1    bit patterens for 2x,4x,8x,16x   (stealthChop default, uses 256x intpol)
+#define TMC2209  9  // step/dir stepper driver with EN LOW.  allows M0,M1    bit patterens for 8x,16x,32x,64x (M2 sets spreadCycle/stealthChop, uses 256x intpol)
+#define ST820    10 // step/dir stepper driver with EN LOW.  allows M0,M1,M2 bit patterens for 1x,2x,4x,8x,16x,32x,128x,256x
+#define TMC_SPI  11 // step/dir stepper driver with EN LOW,  uses TMC protocol SPI comms   for 1x,2x...,256x (SPI sets spreadCycle/stealthChop etc. for TMC2130 & TMC5160)
+#define GENERIC  12 // step/dir stepper driver, alias for GENERIC1
+#define GENERIC1 12 // step/dir stepper driver with EN LOW,  allows                        for 1x,2x,4x,8x,16x,32x,64x,128x,256x (no mode switching)
+#define GENERIC2 13 // step/dir stepper driver with EN HIGH, otherwise as above
+#define SERVO    14 // step/dir servo   driver, alias for SERVO1
+#define SERVO1   14 // step/dir servo   driver with EN LOW,  allows M0 bit pattern for LOW = native mode & goto HIGH = 2x,4x,8x,16x,32x,64x, or 128x *larger* steps
+#define SERVO2   15 // step/dir servo   driver with EN HIGH, otherwise as above
+#define DRIVER_MODEL_LAST 15
 
-// Minimum pulse width
+// Minimum pulse width in nS
 #define A4988_PULSE_WIDTH   1000
 #define DRV8825_PULSE_WIDTH 2000
 #define S109_PULSE_WIDTH    300
@@ -36,25 +42,20 @@
 #define TMC2100_PULSE_WIDTH 103
 #define TMC2208_PULSE_WIDTH 103
 #define TMC2209_PULSE_WIDTH 103
-#define TMC_SPI_PULSE_WIDTH 103
 #define ST820_PULSE_WIDTH   20
+#define TMC_SPI_PULSE_WIDTH 103
+#define GENERIC_PULSE_WIDTH 500  // enough for 1MHz stepping
+#define SERVO_PULSE_WIDTH   500  // enough for 1MHz stepping
 
 // Wave forms
-#define SQUARE 1
-#define PULSE 2
-#define DEDGE 3
+#define SQUARE 2
+#define PULSE 3
+#define DEDGE 4
 
 // Decay Modes
-#define STEALTHCHOP 1
-#define SPREADCYCLE 0
 #define OPEN 2
-
-// EN signal state defaults LOW
-#define AXIS1_DRIVER_ENABLE LOW
-#define AXIS2_DRIVER_ENABLE LOW
-#define AXIS3_DRIVER_ENABLE LOW
-#define AXIS4_DRIVER_ENABLE LOW
-#define AXIS5_DRIVER_ENABLE LOW
+#define STEALTHCHOP 3
+#define SPREADCYCLE 4
 
 // default mode switch state and sleep is disabled
 #define MODE_SWITCH_BEFORE_SLEW OFF
@@ -73,6 +74,8 @@
 #define LEN_TMC2208 4
 #define LEN_TMC2209 4
 #define LEN_TMC_SPI 9
+#define LEN_GENERIC 9
+#define LEN_SERVO   8
 
 // The various microsteps for different driver models, with the bit modes for each
 unsigned int StepsA4988  [LEN_A4988]  [2] = { {1,0}, {2,1}, {4,2}, {8,3}, {16,7} };
@@ -84,6 +87,8 @@ unsigned int StepsTMC2208[LEN_TMC2208][2] = {        {2,1}, {4,2}, {8,0}, {16,3}
 unsigned int StepsTMC2209[LEN_TMC2209][2] = {                      {8,0}, {16,3}, {32,1}, {64,2} };
 unsigned int StepsTMC2100[LEN_TMC2100][2] = { {1,0}, {2,1}, {4,2},        {16,3} };
 unsigned int StepsTMC_SPI[LEN_TMC_SPI][2] = { {1,8}, {2,7}, {4,6}, {8,5}, {16,4}, {32,3}, {64,2}, {128,1}, {256,0} };
+unsigned int StepsGENERIC[LEN_GENERIC][2] = { {1,0}, {2,0}, {4,0}, {8,0}, {16,0}, {32,0}, {64,0}, {128,0}, {256,0} };
+unsigned int StepsSERVO  [LEN_SERVO][2]   = { {1,0}, {2,1}, {4,1}, {8,1}, {16,1}, {32,1}, {64,1}, {128,1} };
 
 unsigned int searchTable(unsigned int Table[][2], int TableLen, unsigned int Microsteps) {
   int i;
@@ -130,6 +135,12 @@ unsigned int translateMicrosteps(int axis, int DriverModel, unsigned int Microst
       break;
     case TMC_SPI:
       Mode = searchTable(StepsTMC_SPI, LEN_TMC_SPI, Microsteps);
+      break;
+    case GENERIC:
+      Mode = searchTable(StepsGENERIC, LEN_GENERIC, Microsteps);
+      break;
+    case SERVO:
+      Mode = searchTable(StepsSERVO, LEN_SERVO, Microsteps);
       break;
     default:
       Mode=1;

@@ -39,8 +39,6 @@ void processCommands() {
     char *conv_end;
 #if FOCUSER1 == ON
     static char primaryFocuser = 'F';
-#endif
-#if FOCUSER2 == ON
     static char secondaryFocuser = 'f';
 #endif
 
@@ -69,12 +67,12 @@ void processCommands() {
 
     // if a command is ready, process it
     Command process_command = COMMAND_NONE;
-    if (cmdA.ready()) { strcpy(command,cmdA.getCmd()); strcpy(parameter,cmdA.getParameter()); cmdA.flush(); SerialA.flush(); process_command=COMMAND_SERIAL_A; }
+    if (cmdA.ready()) { strcpy(command,cmdA.getCmd()); strcpy(parameter,cmdA.getParameter()); cmdA.flush(); process_command=COMMAND_SERIAL_A; }
 #ifdef HAL_SERIAL_B_ENABLED
-    else if (cmdB.ready()) { strcpy(command,cmdB.getCmd()); strcpy(parameter,cmdB.getParameter()); cmdB.flush(); SerialB.flush();  process_command=COMMAND_SERIAL_B; }
+    else if (cmdB.ready()) { strcpy(command,cmdB.getCmd()); strcpy(parameter,cmdB.getParameter()); cmdB.flush(); process_command=COMMAND_SERIAL_B; }
 #endif
 #ifdef HAL_SERIAL_C_ENABLED
-    else if (cmdC.ready()) { strcpy(command,cmdC.getCmd()); strcpy(parameter,cmdC.getParameter()); cmdC.flush(); SerialC.flush(); process_command=COMMAND_SERIAL_C; }
+    else if (cmdC.ready()) { strcpy(command,cmdC.getCmd()); strcpy(parameter,cmdC.getParameter()); cmdC.flush(); process_command=COMMAND_SERIAL_C; }
 #endif
 #if ST4_HAND_CONTROL == ON
     else if (cmdST4.ready()) { strcpy(command,cmdST4.getCmd()); strcpy(parameter,cmdST4.getParameter()); cmdST4.flush(); process_command=COMMAND_SERIAL_ST4; }
@@ -219,7 +217,7 @@ void processCommands() {
 //  :B-#   Decrease Reticule Brightness
 //         Returns: Nothing
       if ((command[0] == 'B') && ((command[1] == '+') || (command[1] == '-')))  {
-#if LED_RETICLE_PIN >= 0
+#if LED_RETICLE >= 0
         int scale;
         if (reticuleBrightness > 255-8) scale=1; else
         if (reticuleBrightness > 255-32) scale=4; else
@@ -274,20 +272,18 @@ void processCommands() {
           if ((atHome) && (trackingState == TrackingNone)) {
             // initialize both serial ports
             SerialA.println("The ESP8266 will now be placed in flash upload mode (at 115200 Baud.)");
+            SerialA.println("Arduino's 'Tools -> Upload Speed' should be set to 115200 Baud.");
             SerialA.println("Waiting for data, you have one minute to start the upload.");
-            delay(500);
-            SerialA.begin(115200);
-#ifdef ESP32
-  #if SERIAL_B_BAUD_DEFAULT != 115200
-            #error "On the ESP32, when SERIAL_B_ESP_FLASHING is used SERIAL_B_BAUD_DEFAULT must be 115200"
-  #endif
-#else
-            SerialB.begin(115200);
-#endif
-            digitalWrite(ESP8266Gpio0Pin,LOW); delay(20); // Pgm mode LOW
-            digitalWrite(ESP8266RstPin,LOW);  delay(20);  // Reset, if LOW
-            digitalWrite(ESP8266RstPin,HIGH); delay(20);  // Reset, inactive HIGH
+            delay(1000);
 
+            SerialB.begin(115200);
+            SerialA.begin(115200);
+            delay(1000);
+
+            digitalWrite(ESP8266Gpio0Pin,LOW); delay(20);  // Pgm mode LOW
+            digitalWrite(ESP8266RstPin,LOW);   delay(20);  // Reset, if LOW
+            digitalWrite(ESP8266RstPin,HIGH);  delay(20);  // Reset, inactive HIGH
+            
             unsigned long lastRead=millis()+55000; // so we have a total of 1 minute to start the upload
             while (true) {
               // read from port 1, send to port 0:
@@ -315,11 +311,9 @@ void processCommands() {
             SerialA.println("returning to default Baud rates, and resuming OnStep operation...");
             delay(500);
 
-#ifndef ESP32
-            SerialB.begin(SERIAL_B_BAUD_DEFAULT); delay(500);
-#endif
-            SerialA.begin(9600);
-            delay(500);
+            SerialB.begin(SERIAL_B_BAUD_DEFAULT);
+            SerialA.begin(SERIAL_A_BAUD_DEFAULT);
+            delay(1000);
 
           } else commandError=true;
         } else commandError=true;
@@ -327,167 +321,132 @@ void processCommands() {
 #endif
 
 #if FOCUSER1 == ON
-//   F - Focuser1 Commands
-      if (command[0] == primaryFocuser) {
+//   F,f - Focuser1 and Focuser2 Commands
+      if (command[0] == 'F' || command[0]=='f') {
+
+        focuser *foc = NULL;
+        if (command[0] == primaryFocuser) foc = &foc1;
+#if FOCUSER2 == ON
+        else if (command[0] == secondaryFocuser) foc = &foc2;
+#endif
+
+        // check for commands that shouldn't have a parameter
+        boolean badcmd = false; if (strchr("TpIMtuQFS1234+-GZHh",command[1]) && parameter[0] != 0) badcmd = true;
+
+        if (foc != NULL && !badcmd) {
+
+        // get ready for commands that convert to microns or steps (these commands are upper-case for microns OR lower-case for steps)
+        double spm = foc->getStepsPerMicro(); if (strchr("gimrs",command[1])) spm = 1.0;
+
 //  :FA#  Active?
 //          Return: 0 on failure
 //                  1 on success
-//  :FAn# Select focuser 1 or 2
+//  :FAn# Select focuser 1 or 2 as primary
 //          Return: 0 on failure
 //                  1 on success
         if (command[1] == 'A') {
-#if FOCUSER2 == ON
           if ((parameter[0] == '1') && (parameter[1] == 0)) { primaryFocuser='F'; secondaryFocuser='f'; } else
+#if FOCUSER2 == ON
           if ((parameter[0] == '2') && (parameter[1] == 0)) { primaryFocuser='f'; secondaryFocuser='F'; } else
 #endif
           if (parameter[0] != 0) commandError=true;
         } else
-//  :F+#   Move focuser in (toward objective)
-//         Returns: Nothing
-      if (command[1] == '+') { foc1.startMoveIn(); quietReply=true; } else
-//  :F-#   Move focuser out (away from objective)
-//         Returns: Nothing
-      if (command[1] == '-') { foc1.startMoveOut(); quietReply=true; } else
+
+//  :FT#   Get status
+//         Returns: M# (for moving) or S# (for stopped)
+        if (command[1] == 'T') { if (foc->moving()) strcpy(reply,"M"); else strcpy(reply,"S"); quietReply=true; } else
+//  :Fp#   Get mode
+//         Return: 0 for absolute
+//                 1 for pseudo absolute
+        if (command[1] == 'p') { if (!foc->isDcFocuser()) commandError=true; } else 
+
+//  :FI#   Get full in position (in microns or steps)
+//         Returns: n#
+        if (toupper(command[1]) == 'I') { sprintf(reply,"%ld",(long)round(foc->getMin()/spm)); quietReply=true; } else
+//  :FM#   Get max position (in microns or steps)
+//         Returns: n#
+        if (toupper(command[1]) == 'M') { sprintf(reply,"%ld",(long)round(foc->getMax()/spm)); quietReply=true; } else
+
+//  :Ft#   Get focuser temperature
+//         Returns: n# temperature in deg. C
+        if (command[1] == 't') { dtostrf(ambient.getTelescopeTemperature(),3,1,reply); quietReply=true; } else
+//  :Fu#   Get focuser microns per step
+//         Returns: n.n#
+        if (command[1] == 'u') { dtostrf(1.0/foc->getStepsPerMicro(),7,5,reply); quietReply=true; } else
+//  :FC#   Get focuser temperature compensation coefficient
+//         Return: n.n#
+        if (command[1] == 'C' && parameter[0] == 0) { dtostrf(foc->getTcfCoef(),7,5,reply); quietReply=true; } else
+//  :FCn.n# Set focuser temperature compensation coefficient in um per deg. C (+ moves out as temperature falls,) use 0.0 to disable.
+//         Return: 0 on failure
+//                 1 on success
+        if (command[1] == 'C') { f = atof(parameter); if (abs(f) < 10000.0) foc->setTcfCoef(f); else { f = 0.0; foc->setTcfCoef(f); commandError=true; } } else
+//  :Fc#   Get focuser temperature compensation enable status
+//         Return: 0# if disabled
+//                 1# if enabled
+        if (command[1] == 'c' && parameter[0] == 0) { if (foc->getTcfEnable()) strcpy(reply,"1"); else strcpy(reply,"0"); quietReply=true; } else
+//  :Fcn#  Enable/disable focuser temperature compensation
+//         Return: 0 on failure
+//                 1 on success
+        if (command[1] == 'c' && parameter[1] == 0) { foc->setTcfEnable(parameter[0] != '0'); } else
+
+//  :FP#   Get focuser DC Motor Power Level (in %)
+//         Returns: nnn#
+//  :FPn#  Set focuser DC Motor Power Level (in %)
+//         Return: 0 on failure
+//                 1 on success
+        if (command[1] == 'P') {
+          if (foc->isDcFocuser()) {
+            if (parameter[0] == 0) {
+              sprintf(reply,"%d",(int)foc->getDcPower()); quietReply=true; 
+            } else {
+              i=atol(parameter);
+              if ((i >= 0) && (i <= 100)) foc->setDcPower(i); else commandError=true; 
+            }
+          } else commandError=true;
+        } else
+
 //  :FQ#   Stop the focuser
 //         Returns: Nothing
-      if (command[1] == 'Q') { foc1.stopMove(); quietReply=true; } else
-//  :FG#   Get focuser current position (in microns)
-//         Returns: snnn#
-      if (command[1] == 'G') { sprintf(reply,"%ld",(long)round(foc1.getPosition())); quietReply=true; } else
-//  :FI#  Get full in position (in microns)
-//         Returns: n#
-        if (command[1] == 'I') { sprintf(reply,"%ld",(long)round(foc1.getMin())); quietReply=true; } else
-//  :FM#  Get max position (in microns)
-//         Returns: n#
-        if (command[1] == 'M') { sprintf(reply,"%ld",(long)round(foc1.getMax())); quietReply=true; } else
-//  :FT#  get status
-//         Returns: M# (for moving) or S# (for stopped)
-        if (command[1] == 'T') { if (foc1.moving()) strcpy(reply,"M"); else strcpy(reply,"S"); quietReply=true; } else
-//  :FZ#   Set focuser position as zero
-//         Returns: Nothing
-      if (command[1] == 'Z') { foc1.setPosition(0); quietReply=true; } else
-//  :FH#   Set focuser position as half-travel
-//         Returns: Nothing
-      if (command[1] == 'H') { foc1.setPosition(((AXIS4_LIMIT_MAX+AXIS4_LIMIT_MIN)/2.0)*1000.0); quietReply=true; } else
+        if (command[1] == 'Q') { foc->stopMove(); quietReply=true; } else
+
 //  :FF#   Set focuser for fast motion (1mm/s)
 //         Returns: Nothing
-      if (command[1] == 'F') { foc1.setMoveRate(1000); quietReply=true; } else
-#if AXIS4_DRIVER_DC_MODE != OFF
-//  :FP#      Get focuser DC Motor Power Level (in %)
-//            Returns: nnn#
-//  :FPnnn#   Set focuser DC Motor Power Level (in %)
-//            Return: 0 on failure
-//                    1 on success
-      if (command[1] == 'P') {
-        if (parameter[0] == 0) {
-          sprintf(reply,"%d",(int)dcPwrAxis4); quietReply=true; 
-        } else {
-          i=atol(parameter);
-          if ((i >= 0) && (i <= 100)) { dcPwrAxis4=i; foc1.setDcPower(dcPwrAxis4); nv.write(EE_dcPwrAxis4,i); } else commandError=true; 
-        }
-      } else
-#endif
-//  :Fp#      Check for focuser pseudo absolute mode
-//            Return: 0 on failure
-//                    1 on success
-      if (command[1] >= 'p') {
-#if AXIS4_DRIVER_DC_MODE == OFF
-      commandError=true;
-#endif
-      } else 
-//  :FRsnnn#  Set focuser target position relative (in microns)
-//            Returns: Nothing
-      if (command[1] == 'R') { foc1.relativeTarget(atol(parameter)); quietReply=true; } else
-//  :FS#      Set focuser for slow motion (0.01mm/s)
-//            Returns: Nothing
-//  :FSsnnn#  Set focuser target position (in microns)
-//            Returns: Nothing
-      if (command[1] == 'S') { if (parameter[0] == 0) { foc1.setMoveRate(constrain(1,AXIS4_LIMIT_MIN_RATE,1000)); quietReply=true; } else foc1.setTarget(atol(parameter)); } else
-//  :Fn#   Movement rate, 1=finest, 2=0.01mm/second, 3=0.1mm/second, 4=1mm/second
+        if (command[1] == 'F') { foc->setMoveRate(1000); quietReply=true; } else
+//  :FS#   Set focuser for slow motion (0.01mm/s)
 //         Returns: Nothing
-      if ((command[1] >= '1') && (command[1] <= '4')) { i=command[1]-'1'; int p[] = {1,10,100,1000}; foc1.setMoveRate(constrain(p[i],AXIS4_LIMIT_MIN_RATE,1000)); quietReply=true; } else commandError=true;
-      } else
-#endif
+        if (command[1] == 'S' && parameter[0] == 0) { foc->setMoveRate(1); quietReply=true; } else
+//  :Fn#   Set focuser move rate, 1=finest, 2=0.01mm/second, 3=0.1mm/second, 4=1mm/second
+//         Returns: Nothing
+        if (command[1] >= '1' && command[1] <= '4') { int p[] = {1,10,100,1000}; foc->setMoveRate(p[command[1] - '1']); quietReply=true; } else
+//  :F+#   Move focuser in (toward objective)
+//         Returns: Nothing
+        if (command[1] == '+') { foc->startMoveIn(); quietReply=true; } else
+//  :F-#   Move focuser out (away from objective)
+//         Returns: Nothing
+        if (command[1] == '-') { foc->startMoveOut(); quietReply=true; } else
 
-#if FOCUSER2 == ON
-//   f - Focuser2 Commands
-      if (command[0] == secondaryFocuser) {
-//  :fA#  Active?
-//          Return: 0 on failure
-//                  1 on success
-//  :fAn# Select focuser 1 or 2
-//          Return: 0 on failure
-//                  1 on success
-        if (command[1] == 'A') {
-          if ((parameter[0] == '1') && (parameter[1] == 0)) { primaryFocuser='F'; secondaryFocuser='f'; } else
-          if ((parameter[0] == '2') && (parameter[1] == 0)) { primaryFocuser='f'; secondaryFocuser='F'; } else
-          if (parameter[0] != 0) commandError=true;
-        } else
-//  :f+#   Move focuser in (toward objective,) default rate = 0.1mm/second
-//         Returns: Nothing
-      if (command[1] == '+') { foc2.startMoveIn(); quietReply=true; } else
-//  :f-#   Move focuser out (away from objective)
-//         Returns: Nothing
-      if (command[1] == '-') { foc2.startMoveOut(); quietReply=true; } else
-//  :fQ#   Stop the focuser
-//         Returns: Nothing
-      if (command[1] == 'Q') { foc2.stopMove(); quietReply=true; } else
-//  :fG#   Get focuser current position (in microns)
+//  :FG#   Get focuser current position (in microns or steps)
 //         Returns: snnn#
-      if (command[1] == 'G') { sprintf(reply,"%ld",(long)round(foc2.getPosition())); quietReply=true; } else
-//  :fI#  Get full in position (in microns)
-//         Returns: n#
-        if (command[1] == 'I') { sprintf(reply,"%ld",(long)round(foc2.getMin())); quietReply=true; } else
-//  :fM#  Get max position (in microns)
-//         Returns: n#
-        if (command[1] == 'M') { sprintf(reply,"%ld",(long)round(foc2.getMax())); quietReply=true; } else
-//  :fT#  get status
-//         Returns: M# (for moving) or S# (for stopped)
-        if (command[1] == 'T') { if (foc2.moving()) strcpy(reply,"M"); else strcpy(reply,"S"); quietReply=true; } else
-//  :fZ#   Set focuser position as zero
+        if (toupper(command[1]) == 'G') { sprintf(reply,"%ld",(long)round(foc->getPosition()/spm)); quietReply=true; } else
+//  :FRsn# Set focuser target position relative (in microns or steps)
 //         Returns: Nothing
-      if (command[1] == 'Z') { foc2.setPosition(0); quietReply=true; } else
-//  :fH#   Set focuser position as half-travel
+        if (toupper(command[1]) == 'R') { foc->relativeTarget((double)atol(parameter)*spm); quietReply=true; } else
+//  :FSn#  Set focuser target position (in microns or steps)
+//         Return: 0 on failure
+//                 1 on success
+        if (toupper(command[1]) == 'S') { foc->setTarget((double)atol(parameter)*spm); } else
+//  :FZ#   Set focuser position as zero
 //         Returns: Nothing
-      if (command[1] == 'H') { foc2.setPosition(((AXIS5_LIMIT_MAX+AXIS5_LIMIT_MIN)/2.0)*1000.0); quietReply=true; } else
-//  :fF#   Set focuser for fast motion (1mm/s)
+        if (command[1] == 'Z') { foc->setPosition(0); quietReply=true; } else
+//  :FH#   Set focuser position as half-travel
 //         Returns: Nothing
-      if (command[1] == 'F') { foc2.setMoveRate(1000); quietReply=true; } else
-#if AXIS5_DRIVER_DC_MODE != OFF
-//  :fP#      Get focuser DC Motor Power Level (in %)
-//            Returns: nnn#
-//  :fPnnn#   Set focuser DC Motor Power Level (in %)
-//            Return: 0 on failure
-//                    1 on success
-      if (command[1] == 'p') {
-        if (parameter[0] == 0) {
-          sprintf(reply,"%d",(int)dcPwrAxis5); quietReply=true; 
-        } else {
-          i=atol(parameter);
-          if ((i >= 0) && (i <= 100)) { dcPwrAxis5=i; foc2.setDcPower(dcPwrAxis5); nv.write(EE_dcPwrAxis5,i); } else commandError=true; 
-        }
+        if (command[1] == 'H') { foc->setPosition((foc->getMax()+foc->getMin())/2.0); quietReply=true; } else
+//  :Fh#   Set focuser target position at half-travel
+//         Returns: Nothing
+        if (command[1] == 'h') { foc->setTarget((foc->getMax()+foc->getMin())/2.0); quietReply=true; } else commandError=true;
+        
+        } else commandError=true;
       } else
-#endif
-//  :fp#      Check for focuser pseudo absolute mode
-//            Return: 0 on failure
-//                    1 on success
-      if (command[1] >= 'p') {
-#if AXIS5_DRIVER_DC_MODE == OFF
-      commandError=true;
-#endif
-      } else 
-//  :fRsnnn#  Set focuser target position relative (in microns)
-//            Returns: Nothing
-      if (command[1] == 'R') { foc2.relativeTarget(atol(parameter)); quietReply=true; } else
-//  :fS#      Set focuser for slow motion (0.01mm/s)
-//            Returns: Nothing
-//  :fSsnnn#  Set focuser target position (in microns)
-//            Returns: Nothing
-      if (command[1] == 'S') { if (parameter[0] == 0) { foc2.setMoveRate(constrain(1,AXIS5_LIMIT_MIN_RATE,1000)); quietReply=true; } else foc2.setTarget(atol(parameter)); } else
-//  :fn#   Movement rate, 1=finest, 2=0.01mm/second, 3=0.1mm/second, 4=1mm/second
-//         Returns: Nothing
-      if ((command[1] >= '1') && (command[1] <= '4')) { i=command[1]-'1'; int p[] = {1,10,100,1000}; foc2.setMoveRate(constrain(p[i],AXIS5_LIMIT_MIN_RATE,1000)); quietReply=true; } else commandError=true;
-     } else
 #endif
 
 //   G - Get Telescope Information
@@ -923,7 +882,7 @@ void processCommands() {
             switch (parameter[1]) {
               case '1': dtostrf((double)MaxRateDef,3,3,reply); quietReply=true; break;
               case '2': dtostrf(SLEW_ACCELERATION_DIST,2,1,reply); quietReply=true; break;
-              case '3': sprintf(reply,"%ld",(long)round(BACKLASH_RATE)); quietReply=true; break;
+              case '3': sprintf(reply,"%ld",(long)round(TRACK_BACKLASH_RATE)); quietReply=true; break;
               case '4': sprintf(reply,"%ld",(long)round(AXIS1_STEPS_PER_DEGREE)); quietReply=true; break;
               case '5': sprintf(reply,"%ld",(long)round(AXIS2_STEPS_PER_DEGREE)); quietReply=true; break;
               case '6': dtostrf(StepsPerSecondAxis1,3,6,reply); quietReply=true; break;
@@ -993,27 +952,6 @@ void processCommands() {
 #endif
 #ifdef Aux8
           if ((parameter[0] == 'G') && (parameter[1] == '8')) { sprintf(reply,"%d",(int)round((float)valueAux8/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux9
-          if ((parameter[0] == 'G') && (parameter[1] == '9')) { sprintf(reply,"%d",(int)round((float)valueAux9/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux10
-          if ((parameter[0] == 'G') && (parameter[1] == 'A')) { sprintf(reply,"%d",(int)round((float)valueAux10/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux11
-          if ((parameter[0] == 'G') && (parameter[1] == 'B')) { sprintf(reply,"%d",(int)round((float)valueAux11/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux12
-          if ((parameter[0] == 'G') && (parameter[1] == 'C')) { sprintf(reply,"%d",(int)round((float)valueAux12/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux13
-          if ((parameter[0] == 'G') && (parameter[1] == 'D')) { sprintf(reply,"%d",(int)round((float)valueAux13/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux14
-          if ((parameter[0] == 'G') && (parameter[1] == 'E')) { sprintf(reply,"%d",(int)round((float)valueAux14/2.55)); quietReply=true; } else
-#endif
-#ifdef Aux15
-          if ((parameter[0] == 'G') && (parameter[1] == 'F')) { sprintf(reply,"%d",(int)round((float)valueAux15/2.55)); quietReply=true; } else
 #endif
             commandError=true;
         } else commandError=true;
@@ -1898,27 +1836,6 @@ void processCommands() {
   #else
               if (v == 0) digitalWrite(Aux8,LOW); else digitalWrite(Aux8,HIGH); } else
   #endif
-#endif
-#ifdef Aux9
-            if (parameter[1] == '9') { valueAux9=v; static bool init=false; if (!init) { pinMode(Aux9,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux9,LOW); else digitalWrite(Aux9,HIGH); } else
-#endif
-#ifdef Aux10
-            if (parameter[1] == 'A') { valueAux10=v; static bool init=false; if (!init) { pinMode(Aux10,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux10,LOW); else digitalWrite(Aux10,HIGH); } else
-#endif
-#ifdef Aux11
-            if (parameter[1] == 'B') { valueAux11=v; static bool init=false; if (!init) { pinMode(Aux11,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux11,LOW); else digitalWrite(Aux11,HIGH); } else
-#endif
-#ifdef Aux12
-            if (parameter[1] == 'C') { valueAux12=v; static bool init=false; if (!init) { pinMode(Aux12,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux12,LOW); else digitalWrite(Aux12,HIGH); } else
-#endif
-#ifdef Aux13
-            if (parameter[1] == 'D') { valueAux13=v; static bool init=false; if (!init) { pinMode(Aux13,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux13,LOW); else digitalWrite(Aux13,HIGH); } else
-#endif
-#ifdef Aux14
-            if (parameter[1] == 'E') { valueAux14=v; static bool init=false; if (!init) { pinMode(Aux14,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux14,LOW); else digitalWrite(Aux14,HIGH); } else
-#endif
-#ifdef Aux15
-            if (parameter[1] == 'F') { valueAux15=v; static bool init=false; if (!init) { pinMode(Aux15,OUTPUT); init=true; } if (v == 0) digitalWrite(Aux15,LOW); else digitalWrite(Aux15,HIGH); } else
 #endif
             commandError=true;
           } else commandError=true;

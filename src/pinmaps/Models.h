@@ -4,13 +4,16 @@
 #if PINMAP == Classic
   #include "Pins.Classic.h"
 #endif
+#if PINMAP == ClassicShield
+  #include "Pins.Classic.h"
+#endif
 #if PINMAP == Mega2560Alt
   #include "Pins.Mega2560Alt.h"
 #endif
 #if PINMAP == MiniPCB
   #include "Pins.MiniPCB.h"
 #endif
-#if PINMAP == MiniEMB
+#if PINMAP == MiniPCB13
   #include "Pins.MiniPCB.h"
 #endif
 #if PINMAP == MiniPCB2
@@ -22,7 +25,7 @@
 #if PINMAP == MaxPCB2
   #include "Pins.MaxPCB.h"
 #endif
-#if PINMAP == MaxTMC
+#if PINMAP == MaxPCB3
   #include "Pins.MaxPCB.h"
 #endif
 #if PINMAP == MaxESP
@@ -35,6 +38,9 @@
   #include "Pins.MaxESP3.h"
 #endif
 #if PINMAP == Ramps14
+  #include "Pins.Ramps14.h"
+#endif
+#if PINMAP == MksGenL2
   #include "Pins.Ramps14.h"
 #endif
 #if PINMAP == STM32Blue

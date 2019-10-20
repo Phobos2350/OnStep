@@ -36,8 +36,8 @@
 #define FirmwareDate          __DATE__
 #define FirmwareTime          __TIME__
 #define FirmwareVersionMajor  "1"
-#define FirmwareVersionMinor  "7"
-#define FirmwareVersionPatch  "c"
+#define FirmwareVersionMinor  "8"
+#define FirmwareVersionPatch  "f"
 
 #define Version FirmwareVersionMajor "." FirmwareVersionMinor FirmwareVersionPatch
 
@@ -48,14 +48,27 @@
 #include <ESP8266WiFiAP.h>
 #include <EEPROM.h>
 
-#include "Config.h"
+#define DEBUG_OFF   // Turn _ON to allow Ethernet startup without OnStep (Serial port for debug at 9600 baud)
+
 #include "Constants.h"
+#include "Config.h"
+
+// The settings below are for initialization only, afterward they are stored and recalled from EEPROM and must
+// be changed in the web interface OR with a reset (for initialization again) as described in the Config.h comments
+#if SERIAL_BAUD<=28800
+  #define TIMEOUT_WEB 60
+  #define TIMEOUT_CMD 60
+#else
+  #define TIMEOUT_WEB 15
+  #define TIMEOUT_CMD 30
+#endif
+
 #define AXIS1_ENC_A_PIN 14 // pin# for Axis1 encoder, for A or CW
 #define AXIS1_ENC_B_PIN 12 // pin# for Axis1 encoder, for B or CCW
 #define AXIS2_ENC_A_PIN 5  // pin# for Axis1 encoder, for A or CW
 #define AXIS2_ENC_B_PIN 4  // pin# for Axis1 encoder, for B or CCW
 #include "Encoders.h"
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
 Encoders encoders;
 #endif
 
@@ -100,8 +113,15 @@ IPAddress wifi_ap_sn = IPAddress(255,255,255,0);
 
 ESP8266WebServer server(80);
 
-WiFiServer cmdSvr(9999);
-WiFiClient cmdSvrClient;
+#if STANDARD_COMMAND_CHANNEL == ON
+  WiFiServer cmdSvr(9999);
+  WiFiClient cmdSvrClient;
+#endif
+
+#if PERSISTENT_COMMAND_CHANNEL == ON
+  WiFiServer persistentCmdSvr(9998);
+  WiFiClient persistentCmdSvrClient;
+#endif
 
 void handleNotFound(){
   String message = "File Not Found\n\n";
@@ -119,8 +139,8 @@ void handleNotFound(){
 }
 
 void setup(void){
-#ifdef LED_PIN
-  pinMode(LED_PIN,OUTPUT);
+#if LED_STATUS != OFF
+  pinMode(LED_STATUS,OUTPUT);
 #endif
   EEPROM.begin(1024);
 
@@ -136,7 +156,7 @@ void setup(void){
     EEPROM_writeInt(10,(int)WebTimeout);
     EEPROM_writeInt(12,(int)CmdTimeout);
 
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
     EEPROM_writeLong(600,Axis1EncDiffLimit);
     EEPROM_writeLong(604,Axis2EncDiffLimit);
     EEPROM_writeLong(608,20);  // enc short term average samples
@@ -169,14 +189,14 @@ void setup(void){
     WebTimeout=EEPROM_readInt(10);
     CmdTimeout=EEPROM_readInt(12);
 
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
     Axis1EncDiffLimit=EEPROM_readLong(600);
     Axis2EncDiffLimit=EEPROM_readLong(604);
-#ifdef AXIS1_ENC_RATE_CONTROL_ON
+#if AXIS1_ENC_RATE_CONTROL == ON
     Axis1EncStaSamples=EEPROM_readLong(608);
     Axis1EncLtaSamples=EEPROM_readLong(612);
     long l=EEPROM_readLong(616); axis1EncRateComp=(float)l/1000000.0;
-#ifdef AXIS1_ENC_INTPOL_COS_ON
+#if AXIS1_ENC_INTPOL_COS == ON
     Axis1EncIntPolPhase =EEPROM_readLong(624);
     Axis1EncIntPolMag   =EEPROM_readLong(628);
 #endif
@@ -202,28 +222,29 @@ void setup(void){
 
 #ifndef DEBUG_ON
   Ser.begin(SERIAL_BAUD_DEFAULT);
-#ifdef SERIAL_SWAP_ON
+#if SERIAL_SWAP == ON
   Ser.swap();
 #endif
+  delay(2000);
 
   byte tb=0;
 Again:
-#ifdef LED_PIN
-  digitalWrite(LED_PIN,LOW);
+#if LED_STATUS != OFF
+  digitalWrite(LED_STATUS,LOW);
 #endif
   char c=0;
 
   // clear the buffers and any noise on the serial lines
   for (int i=0; i<3; i++) {
     Ser.print(":#");
-#ifdef LED_PIN
-    digitalWrite(LED_PIN,HIGH);
+#if LED_STATUS != OFF
+    digitalWrite(LED_STATUS,HIGH);
 #endif
     delay(500);
     Ser.flush();
     c=serialRecvFlush();
-#ifdef LED_PIN
-    digitalWrite(LED_PIN,LOW);
+#if LED_STATUS != OFF
+    digitalWrite(LED_STATUS,LOW);
 #endif
     delay(500);
   }
@@ -239,32 +260,34 @@ Again:
     Ser.println();
   }
  
-  if (SERIAL_BAUD!=SERIAL_BAUD_DEFAULT) {
+  if (SERIAL_BAUD != SERIAL_BAUD_DEFAULT) {
 
     // switch OnStep Serial1 up to ? baud
     Ser.print(HighSpeedCommsStr(SERIAL_BAUD));
-    delay(100);
-    int count=0; c=0;
-    while (Ser.available()>0) { count++; if (count==1) c=Ser.read(); }
-    if (c=='1') {
+    delay(200);
+    int count=0; c=0; while (Ser.available() > 0) { count++; if (count == 1) c=Ser.read(); }
+    if (c == '1') {
         Ser.begin(SERIAL_BAUD);
-    #ifdef SERIAL_SWAP_ON
+#if SERIAL_SWAP == ON
         Ser.swap();
-    #endif
+#endif
+        delay(2000);
     } else {
-#ifdef LED_PIN
-      digitalWrite(LED_PIN,HIGH);
+#if LED_STATUS != OFF
+      digitalWrite(LED_STATUS,HIGH);
 #endif
       // got nothing back, toggle baud rate and try again
       tb++;
-      if (tb==7) tb=1;
-      if (tb==1) Ser.begin(SERIAL_BAUD_DEFAULT);
-      if (tb==4) Ser.begin(SERIAL_BAUD);
+      if (tb == 11) tb=1;
+      if (tb == 1) Ser.begin(SERIAL_BAUD_DEFAULT);
+      if (tb == 6) Ser.begin(SERIAL_BAUD);
       
-#ifdef SERIAL_SWAP_ON
-      Ser.swap();
+      if (tb == 1 || tb == 6) {
+#if SERIAL_SWAP == ON
+        Ser.swap();
 #endif
-      delay(1000);
+        delay(2000);
+      }
       goto Again;
     }
   }
@@ -337,7 +360,7 @@ TryAgain:
   server.on("/settings.htm", handleSettings);
   server.on("/settings.txt", settingsAjax);
   server.on("/control.htm", handleControl);
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
   server.on("/enc.htm", handleEncoders);
   server.on("/encA.txt", encAjaxGet);
   server.on("/enc.txt", encAjax);
@@ -350,24 +373,36 @@ TryAgain:
   
   server.onNotFound(handleNotFound);
 
+#if STANDARD_COMMAND_CHANNEL == ON
   cmdSvr.begin();
   cmdSvr.setNoDelay(true);
+#endif
+
+#if PERSISTENT_COMMAND_CHANNEL == ON
+  persistentCmdSvr.begin();
+  persistentCmdSvr.setNoDelay(true);
+#endif
+
   server.begin();
 
 #ifdef DEBUG_ON
   Ser.println("HTTP server started");
 #endif
 
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
   encoders.init();
 #endif
 }
 
-void loop(void){
+void loop(void) {
   server.handleClient();
-#ifdef ENCODERS_ON
+#if ENCODERS == ON
   encoders.poll();
 #endif
+
+#if STANDARD_COMMAND_CHANNEL == ON
+  // -------------------------------------------------------------------------------------------------------------------------------
+  // Standard IP connections on port 9999
 
   // disconnect client
   static unsigned long clientTime = 0;
@@ -381,10 +416,11 @@ void loop(void){
     clientTime=millis()+2000UL;
   }
 
-  static char writeBuffer[40]="";
-  static int writeBufferPos=0;
-  // check clients for data, if found get the command, send cmd and pickup the response, then return the response
+  // check clients for data, if found get the command, pass to OnStep and pickup the response, then return the response to client
   while (cmdSvrClient && cmdSvrClient.connected() && (cmdSvrClient.available()>0)) {
+    static char writeBuffer[40]="";
+    static int writeBufferPos=0;
+
     // get the data
     byte b=cmdSvrClient.read();
 
@@ -405,11 +441,66 @@ void loop(void){
 
     } else {
       server.handleClient(); 
-#ifdef ENCODERS_ON
+  #if ENCODERS == ON
       encoders.poll();
-#endif
+  #endif
     }
   }
+  // -------------------------------------------------------------------------------------------------------------------------------
+#endif
+
+#if PERSISTENT_COMMAND_CHANNEL == ON
+  // -------------------------------------------------------------------------------------------------------------------------------
+  // Persistent IP connections on port 9998
+
+  // disconnect client
+  static unsigned long persistentClientTime = 0;
+  if (persistentCmdSvrClient && (!persistentCmdSvrClient.connected())) persistentCmdSvrClient.stop();
+  if (persistentCmdSvrClient && ((long)(persistentClientTime-millis())<0)) persistentCmdSvrClient.stop();
+
+  // new client
+  if (!persistentCmdSvrClient && (persistentCmdSvr.hasClient())) {
+    // find free/disconnected spot
+    persistentCmdSvrClient = persistentCmdSvr.available();
+    persistentClientTime=millis()+120000UL;
+  }
+
+  // check clients for data, if found get the command, pass to OnStep and pickup the response, then return the response to client
+  while (persistentCmdSvrClient && persistentCmdSvrClient.connected() && (persistentCmdSvrClient.available()>0)) {
+    static char writeBuffer[40]="";
+    static int writeBufferPos=0;
+
+    // still active? push back disconnect by 2 minutes
+    persistentClientTime=millis()+120000UL;
+
+    // get the data
+    byte b=persistentCmdSvrClient.read();
+
+    writeBuffer[writeBufferPos]=b; writeBufferPos++; if (writeBufferPos>39) writeBufferPos=39; writeBuffer[writeBufferPos]=0;
+
+    // send cmd and pickup the response
+    if ((b=='#') || ((strlen(writeBuffer)==1) && (b==(char)6))) {
+      char readBuffer[40]="";
+      readLX200Bytes(writeBuffer,readBuffer,CmdTimeout); writeBuffer[0]=0; writeBufferPos=0;
+
+      // return the response, if we have one
+      if (strlen(readBuffer)>0) {
+        if (persistentCmdSvrClient && persistentCmdSvrClient.connected()) {
+          persistentCmdSvrClient.print(readBuffer);
+          delay(2);
+        }
+      }
+
+    } else {
+      server.handleClient(); 
+  #if ENCODERS == ON
+      encoders.poll();
+  #endif
+    }
+  }
+  // -------------------------------------------------------------------------------------------------------------------------------
+#endif
+
 }
 
 const char* HighSpeedCommsStr(long baud) {

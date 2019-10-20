@@ -7,15 +7,15 @@
 
 class rotator {
   public:
-    void init(int stepPin, int dirPin, int enPin, float maxRate, double stepsPerDeg) {
+    void init(int stepPin, int dirPin, int enPin, float maxRate, double stepsPerDeg, double min, double max) {
       this->stepPin=stepPin;
       this->dirPin=dirPin;
       this->enPin=enPin;
       this->maxRate=maxRate;
       this->spd=stepsPerDeg;
 
-      if (stepPin!=-1) pinMode(stepPin,OUTPUT);
-      if (dirPin!=-1) pinMode(dirPin,OUTPUT);
+      if (stepPin != -1) pinMode(stepPin,OUTPUT);
+      if (dirPin != -1) pinMode(dirPin,OUTPUT);
 
       // positions
       target.fixed=0;
@@ -29,28 +29,20 @@ class rotator {
       setMoveRate(1.0);
 
       // default min/max
-      setMin(umin);
-      setMax(umax);
+      setMin(min);
+      setMax(max);
 
       nextPhysicalMove=micros()+(unsigned long)(maxRate*1000.0);
       lastPhysicalMove=nextPhysicalMove;
     }
 
     // minimum position in degrees
-    void setMin(double min) {
-      smin=(min*spd);
-    }
-    double getMin() {
-      return smin/spd;
-    }
+    void setMin(double min) { smin=(min*spd); }
+    double getMin() { return smin/spd; }
 
     // maximum position in degrees
-    void setMax(double max) {
-      smax=(max*spd);
-    }
-    double getMax() {
-      return smax/spd;
-    }
+    void setMax(double max) { smax=(max*spd); }
+    double getMax() { return smax/spd; }
 
     // sets logic state for reverse motion
     void setReverseState(int reverseState) {
@@ -62,7 +54,7 @@ class rotator {
     void setDisableState(boolean disableState) {
       this->disableState=disableState;
       if (disableState == LOW) enableState=HIGH; else enableState=LOW;
-      if (enPin!=-1) { pinMode(enPin,OUTPUT); enableDriver(); currentlyDisabled=false; }
+      if (enPin != -1) { pinMode(enPin,OUTPUT); enableDriver(); currentlyDisabled=false; }
     }
 
     // allows enabling/disabling stepper driver
@@ -72,7 +64,7 @@ class rotator {
       if (pda) { pinMode(enPin,OUTPUT); disableDriver(); currentlyDisabled=true; }
     }
 
-#ifdef MOUNT_TYPE_ALTAZM
+#if MOUNT_TYPE == ALTAZM
     // enable/disable the de-rotator
     void enableDR(bool state) {
       DR=state;
@@ -121,7 +113,7 @@ class rotator {
     
     // check if moving
     bool moving() {
-      if ((delta.fixed!=0) || ((long)target.part.m!=spos)) return true; else return false;
+      if ((delta.fixed != 0) || ((long)target.part.m != spos)) return true; else return false;
     }
 
     // enable/disable new continuous move mode
@@ -161,7 +153,7 @@ class rotator {
 
     // get position
     double getPosition() {
-      return ((double)spos+0.5)/spd;
+      return ((double)spos)/spd;
     }
 
     // sets current position in degrees
@@ -169,11 +161,12 @@ class rotator {
       spos=round(deg*spd);
       if (spos < smin) spos=smin; if (spos > smax) spos=smax;
       target.part.m=spos; target.part.f=0;
+      lastMove=millis();
     }
 
     // set target
     void setTarget(double deg) {
-      target.part.m=deg*spd; target.part.f=0;
+      target.part.m=(long)(deg*spd); target.part.f=0;
       if ((long)target.part.m < smin) target.part.m=smin; if ((long)target.part.m > smax) target.part.m=smax;
     }
 
@@ -184,7 +177,7 @@ class rotator {
       if (((long)target.part.m < smin) || ((long)target.part.m > smax)) { DR=false; delta.fixed=0; deltaDR.fixed=0; }
     }
 
-#ifdef MOUNT_TYPE_ALTAZM
+#if MOUNT_TYPE == ALTAZM
     // calculate new de-rotation rate if needed
     void derotate(double h, double d) {
       if (DR) {
@@ -207,14 +200,14 @@ class rotator {
           digitalWrite(stepPin,LOW); delayMicroseconds(5);
           digitalWrite(dirPin,forwardState); delayMicroseconds(5);
           digitalWrite(stepPin,HIGH); spos++;
-          lastPhysicalMove=millis();
+          lastPhysicalMove=micros();
         } else
         if ((spos > (long)target.part.m) && (spos > smin)) {
           if (pda && currentlyDisabled) { currentlyDisabled=false; enableDriver(); delayMicroseconds(5); }
           digitalWrite(stepPin,LOW); delayMicroseconds(5);
           digitalWrite(dirPin,reverseState); delayMicroseconds(5);
           digitalWrite(stepPin,HIGH); spos--;
-          lastPhysicalMove=millis();
+          lastPhysicalMove=micros();
         }
       }
     }
@@ -240,7 +233,7 @@ class rotator {
       digitalWrite(enPin,disableState);
     }
 
-#ifdef MOUNT_TYPE_ALTAZM
+#if MOUNT_TYPE == ALTAZM
     // returns parallactic angle in degrees
     double ParallacticAngle(double HA, double Dec) {
       return atan2(sin(HA/Rad),cos(Dec/Rad)*tan(latitude/Rad)-sin(Dec/Rad)*cos(HA/Rad))*Rad;
@@ -269,16 +262,13 @@ class rotator {
     int nvAddress=-1;
     float maxRate=-1;
     long spsMax=-1;
-    long umin=-180;
     long smin=-1;
-    long umax=+180;
     long smax=-1;
 
     // state
     boolean mc=false;
     int reverseState=LOW;
     int forwardState=HIGH;
-    static int lastDirState=-1;
     boolean pda=false;
     int disableState=LOW;
     int enableState=HIGH;

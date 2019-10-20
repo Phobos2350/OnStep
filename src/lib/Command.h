@@ -9,7 +9,7 @@ class cb {
     bool add(char c) {
       // (chr)6 is a special status command for the LX200 protocol
       if ((c == (char)6) && (cbp == 0)) {
-        #ifdef MOUNT_TYPE_ALTAZM
+        #if MOUNT_TYPE == ALTAZM
           cb[0]=':'; cb[1]=(char)6; cb[2]='A'; cb[3]=0; cbp=3; c='#';
         #else
           cb[0]=':'; cb[1]=(char)6; cb[2]='P'; cb[3]=0; cbp=3; c='#';
@@ -17,7 +17,7 @@ class cb {
       }
 
       // ignore spaces/lf/cr
-      if ((c!=(char)32) && (c!=(char)10) && (c!=(char)13) && (c!=(char)6)) {
+      if ((c != (char)32) && (c != (char)10) && (c != (char)13) && (c != (char)6)) {
         if (cbp > bufferSize-2) cbp=bufferSize-2;
         cb[cbp]=c; cbp++; cb[cbp]=(char)0;
       }

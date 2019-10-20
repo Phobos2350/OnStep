@@ -40,8 +40,8 @@
 // firmware info, these are returned by the ":GV?#" commands
 #define FirmwareDate          __DATE__
 #define FirmwareVersionMajor  3
-#define FirmwareVersionMinor  0       // minor version 0 to 99
-#define FirmwareVersionPatch  "a"     // for example major.minor patch: 1.3c
+#define FirmwareVersionMinor  7       // minor version 0 to 99
+#define FirmwareVersionPatch  "c"     // for example major.minor patch: 1.3c
 #define FirmwareVersionConfig 3       // internal, for tracking configuration file changes
 #define FirmwareName          "On-Step"
 #define FirmwareTime          __TIME__
@@ -50,13 +50,11 @@
 #include <math.h>
 
 #include "Constants.h"
-#include "src/step_dir_drivers/Models.h"
+#include "src/sd_drivers/Models.h"
 #include "Config.h"
 #include "src/pinmaps/Models.h"
 #include "src/HAL/HAL.h"
 #include "Validate.h"
-
-#include "src/lib/St4SerialMaster.h"
 
 // Enable debugging messages on DebugSer -------------------------------------------------------------
 #define DEBUG_OFF             // default=_OFF, use "DEBUG_ON" to activate
@@ -77,15 +75,50 @@
 
 // ---------------------------------------------------------------------------------------------------
 
+#include "src/lib/St4SerialMaster.h"
 #include "src/lib/FPoint.h"
 #include "Globals.h"
-
-#include "src/lib/SoftSPI.h"
 #include "src/lib/Julian.h"
 #include "src/lib/Misc.h"
 #include "src/lib/Sound.h"
+#include "src/lib/Coord.h"
+#include "Align.h"
+#include "src/lib/Library.h"
+#include "src/lib/Command.h"
+#include "src/lib/RTC.h"
+#include "src/lib/Weather.h"
+weather ambient;
 
+#if ROTATOR == ON
+  #include "src/lib/Rotator.h"
+  rotator rot;
+#endif
+
+#if FOCUSER1 == ON || FOCUSER2 == ON
+  #include "src/lib/Focuser.h"
+  #if FOCUSER1 == ON
+    #if AXIS4_DRIVER_DC_MODE != OFF
+      #include "src/lib/FocuserDC.h"
+      focuserDC foc1;
+    #else
+      #include "src/lib/FocuserStepper.h"
+      focuserStepper foc1;
+    #endif
+  #endif
+  #if FOCUSER2 == ON
+    #if AXIS5_DRIVER_DC_MODE != OFF
+      #include "src/lib/FocuserDC.h"
+      focuserDC foc2;
+    #else
+      #include "src/lib/FocuserStepper.h"
+      focuserStepper foc2;
+    #endif
+  #endif
+#endif
+
+// support for TMC2130, TMC5160, etc. stepper drivers in SPI mode
 #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI
+  #include "src/lib/SoftSPI.h"
   #include "src/lib/TMC_SPI.h"
   #if AXIS1_DRIVER_STATUS == TMC_SPI
 //                        SS      ,SCK     ,MISO    ,MOSI
@@ -109,42 +142,6 @@
   #endif
 #endif
 
-#include "src/lib/Coord.h"
-
-#include "src/lib/Library.h"
-#include "src/lib/Command.h"
-#include "Align.h"
-
-#if ROTATOR == ON
-  #include "src/lib/Rotator.h"
-  rotator rot;
-#endif
-
-#if FOCUSER1 == ON || FOCUSER2 == ON
-  #if FOCUSER1 == ON
-    #if AXIS4_DRIVER_DC_MODE != OFF
-      #include "src/lib/FocuserDC.h"
-      focuserDC foc1;
-    #else
-      #include "src/lib/Focuser.h"
-      focuser foc1;
-    #endif
-  #endif
-  #if FOCUSER2 == ON
-    #if AXIS5_DRIVER_DC_MODE != OFF
-      #include "src/lib/FocuserDC.h"
-      focuserDC foc2;
-    #else
-      #include "src/lib/Focuser.h"
-      focuser foc2;
-    #endif
-  #endif
-#endif
-
-// use weather sensors (temperature, pressure, humidity) if present
-#include "src/lib/Weather.h"
-weather ambient;
-
 // Forces initialialization of a host of settings in nv. OnStep does this automatically,
 // most likely, you will want to leave this alone
 // set to true to keep automatic initilization from happening.
@@ -164,6 +161,20 @@ void setup() {
   
   // Call hardware specific initialization
   HAL_Init();
+
+  SerialA.begin(SERIAL_A_BAUD_DEFAULT);
+#ifdef HAL_SERIAL_B_ENABLED
+  SerialB.begin(SERIAL_B_BAUD_DEFAULT);
+#endif
+#ifdef HAL_SERIAL_C_ENABLED
+  SerialC.begin(SERIAL_C_BAUD_DEFAULT);
+#endif
+#if ST4_HAND_CONTROL == ON
+  SerialST4.begin();
+#endif
+
+  // Take another two seconds to be sure Serial ports are online
+  delay(2000);
 
   // initialize the Non-Volatile Memory
   nv.init();
@@ -198,9 +209,9 @@ void setup() {
   timerRateAxis2=SiderealRate;
 
   // backlash takeup rates
-  TakeupRate=SiderealRate/BACKLASH_RATE;
-  timerRateBacklashAxis1=SiderealRate/BACKLASH_RATE;
-  timerRateBacklashAxis2=(SiderealRate/BACKLASH_RATE)*timerRateRatio;
+  TakeupRate=SiderealRate/TRACK_BACKLASH_RATE;
+  timerRateBacklashAxis1=SiderealRate/TRACK_BACKLASH_RATE;
+  timerRateBacklashAxis2=(SiderealRate/TRACK_BACKLASH_RATE)*timerRateRatio;
 
   // now read any saved values from EEPROM into varaibles to restore our last state
   initReadNvValues();
@@ -209,17 +220,6 @@ void setup() {
   setTrackingRate(default_tracking_rate);
   setDeltaTrackingRate();
   initStartTimers();
-
-  SerialA.begin(SERIAL_A_BAUD_DEFAULT);
-#ifdef HAL_SERIAL_B_ENABLED
-  SerialB.begin(SERIAL_B_BAUD_DEFAULT);
-#endif
-#ifdef HAL_SERIAL_C_ENABLED
-  SerialC.begin(SERIAL_C_BAUD_DEFAULT);
-#endif
-#if ST4_HAND_CONTROL == ON
-  SerialST4.begin();
-#endif
  
   // tracking autostart
 #if TRACK_AUTOSTART == ON
@@ -246,18 +246,16 @@ void setup() {
 
   // start rotator if present
 #if ROTATOR == ON
-  rot.init(Axis3StepPin,Axis3DirPin,Axis3_EN,AXIS3_STEP_RATE_MAX,AXIS3_STEPS_PER_DEGREE);
-  rot.setMin(AXIS3_LIMIT_MIN);
-  rot.setMax(AXIS3_LIMIT_MAX);
+  rot.init(Axis3StepPin,Axis3DirPin,Axis3_EN,AXIS3_STEP_RATE_MAX,AXIS3_STEPS_PER_DEGREE,AXIS3_LIMIT_MIN,AXIS3_LIMIT_MAX);
   #if AXIS3_DRIVER_REVERSE == ON
     rot.setReverseState(HIGH);
   #endif
   rot.setDisableState(AXIS3_DRIVER_DISABLE);
   
   #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI && AXIS3_DRIVER_MODEL == TMC_SPI
-    tmcAxis3.setup(AXIS3_DRIVER_INTPOL,AXIS3_DRIVER_DECAY_MODE,AXIS3_MICROSTEP_CODE&0b001111,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_RSENSE);
+    tmcAxis3.setup(AXIS3_DRIVER_INTPOL,AXIS3_DRIVER_DECAY_MODE,AXIS3_DRIVER_MICROSTEP_CODE&0b001111,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_RSENSE);
     delay(150);
-    tmcAxis3.setup(AXIS3_DRIVER_INTPOL,AXIS3_DRIVER_DECAY_MODE,AXIS3_MICROSTEP_CODE&0b001111,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_IHOLD,AXIS3_DRIVER_RSENSE);
+    tmcAxis3.setup(AXIS3_DRIVER_INTPOL,AXIS3_DRIVER_DECAY_MODE,AXIS3_DRIVER_MICROSTEP_CODE&0b001111,AXIS3_DRIVER_IRUN,AXIS3_DRIVER_IHOLD,AXIS3_DRIVER_RSENSE);
   #endif
   
   #if AXIS3_DRIVER_POWER_DOWN == ON
@@ -269,22 +267,20 @@ void setup() {
 
   // start focusers if present
 #if FOCUSER1 == ON
-  foc1.init(Axis4StepPin,Axis4DirPin,Axis4_EN,EE_posAxis4,AXIS4_STEP_RATE_MAX,AXIS4_STEPS_PER_MICRON);
-  foc1.setMin(AXIS4_LIMIT_MIN*1000.0);
-  foc1.setMax(AXIS4_LIMIT_MAX*1000.0);
+  foc1.init(Axis4StepPin,Axis4DirPin,Axis4_EN,EE_posAxis4,EE_tcfCoefAxis4,EE_tcfEnAxis4,AXIS4_STEP_RATE_MAX,AXIS4_STEPS_PER_MICRON,AXIS4_LIMIT_MIN*1000.0,AXIS4_LIMIT_MAX*1000.0,AXIS4_LIMIT_MIN_RATE);
   #if AXIS4_DRIVER_DC_MODE != OFF
-    foc1.setDcPower(dcPwrAxis4);
+    foc1.initDcPower(EE_dcPwrAxis4);
     foc1.setPhase1();
   #endif
   #if AXIS4_DRIVER_REVERSE == ON
     foc1.setReverseState(HIGH);
   #endif
   foc1.setDisableState(AXIS4_DRIVER_DISABLE);
-  
-  #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI && AXIS3_DRIVER_MODEL == TMC_SPI
-    tmcAxis4.setup(AXIS4_DRIVER_INTPOL,AXIS4_DRIVER_DECAY_MODE,AXIS4_MICROSTEP_CODE&0b001111,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_RSENSE);
+
+  #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI && AXIS4_DRIVER_MODEL == TMC_SPI
+    tmcAxis4.setup(AXIS4_DRIVER_INTPOL,AXIS4_DRIVER_DECAY_MODE,AXIS4_DRIVER_MICROSTEP_CODE&0b001111,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_RSENSE);
     delay(150);
-    tmcAxis4.setup(AXIS4_DRIVER_INTPOL,AXIS4_DRIVER_DECAY_MODE,AXIS4_MICROSTEP_CODE&0b001111,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_IHOLD,AXIS4_DRIVER_RSENSE);
+    tmcAxis4.setup(AXIS4_DRIVER_INTPOL,AXIS4_DRIVER_DECAY_MODE,AXIS4_DRIVER_MICROSTEP_CODE&0b001111,AXIS4_DRIVER_IRUN,AXIS4_DRIVER_IHOLD,AXIS4_DRIVER_RSENSE);
   #endif
 
   #if AXIS4_DRIVER_POWER_DOWN == ON
@@ -295,11 +291,9 @@ void setup() {
 #endif
 
 #if FOCUSER2 == ON
-  foc2.init(Axis5StepPin,Axis5DirPin,Axis5_EN,EE_posAxis5,AXIS5_STEP_RATE_MAX,AXIS5_STEPS_PER_MICRON);
-  foc2.setMin(AXIS5_LIMIT_MIN*1000.0);
-  foc2.setMax(AXIS5_LIMIT_MAX*1000.0);
+  foc2.init(Axis5StepPin,Axis5DirPin,Axis5_EN,EE_posAxis5,EE_tcfCoefAxis5,EE_tcfEnAxis5,AXIS5_STEP_RATE_MAX,AXIS5_STEPS_PER_MICRON,AXIS5_LIMIT_MIN*1000.0,AXIS5_LIMIT_MAX*1000.0,AXIS5_LIMIT_MIN_RATE);
   #if AXIS5_DRIVER_DC_MODE == DRV8825
-    foc2.setDcPower(dcPwrAxis5);
+    foc2.initDcPower(EE_dcPwrAxis5);
     foc2.setPhase2();
   #endif
   #if AXIS5_DRIVER_REVERSE == ON
@@ -307,10 +301,10 @@ void setup() {
   #endif
   foc2.setDisableState(AXIS5_DRIVER_DISABLE);
 
-  #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI && AXIS3_DRIVER_MODEL == TMC_SPI
-    tmcAxis5.setup(AXIS5_DRIVER_INTPOL,AXIS5_DRIVER_DECAY_MODE,AXIS5_MICROSTEP_CODE&0b001111,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_RSENSE);
+  #if MODE_SWITCH_BEFORE_SLEW == TMC_SPI && AXIS5_DRIVER_MODEL == TMC_SPI
+    tmcAxis5.setup(AXIS5_DRIVER_INTPOL,AXIS5_DRIVER_DECAY_MODE,AXIS5_DRIVER_MICROSTEP_CODE&0b001111,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_RSENSE);
     delay(150);
-    tmcAxis5.setup(AXIS5_DRIVER_INTPOL,AXIS5_DRIVER_DECAY_MODE,AXIS5_MICROSTEP_CODE&0b001111,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_IHOLD,AXIS5_DRIVER_RSENSE);
+    tmcAxis5.setup(AXIS5_DRIVER_INTPOL,AXIS5_DRIVER_DECAY_MODE,AXIS5_DRIVER_MICROSTEP_CODE&0b001111,AXIS5_DRIVER_IRUN,AXIS5_DRIVER_IHOLD,AXIS5_DRIVER_RSENSE);
   #endif
 
   #if AXIS5_DRIVER_POWER_DOWN == ON
@@ -368,7 +362,7 @@ void loop2() {
 
     // FLASH LED DURING SIDEREAL TRACKING
     if (trackingState == TrackingSidereal) {
-#if LED_STATUS_PIN == ON
+#if LED_STATUS == ON
       if (siderealTimer%20L == 0L) { if (ledOn) { digitalWrite(LEDnegPin,HIGH); ledOn=false; } else { digitalWrite(LEDnegPin,LOW); ledOn=true; } }
 #endif
     }
@@ -523,18 +517,18 @@ void loop2() {
       PPSrateRatio=((double)1000000.0/(double)(PPSavgMicroS));
       if ((long)(micros()-(PPSlastMicroS+2000000UL)) > 0) PPSsynced=false; // if more than two seconds has ellapsed without a pulse we've lost sync
       sei();
-  #if LED_STATUS2_PIN == ON
+  #if LED_STATUS2 == ON
       if (PPSsynced) { if (led2On) { digitalWrite(LEDneg2Pin,HIGH); led2On=false; } else { digitalWrite(LEDneg2Pin,LOW); led2On=true; } } else { digitalWrite(LEDneg2Pin,HIGH); led2On=false; } // indicate PPS
   #endif
       if (LastPPSrateRatio != PPSrateRatio) { SiderealClockSetInterval(siderealInterval); LastPPSrateRatio=PPSrateRatio; }
     }
 #endif
 
-#if LED_STATUS_PIN == ON
+#if LED_STATUS == ON
     // LED indicate PWR on 
     if (trackingState != TrackingSidereal) if (!ledOn) { digitalWrite(LEDnegPin,LOW); ledOn=true; }
 #endif
-#if LED_STATUS2_PIN == ON
+#if LED_STATUS2 == ON
     // LED indicate STOP and GOTO
     if (trackingState == TrackingMoveTo) if (!led2On) { digitalWrite(LEDneg2Pin,LOW); led2On=true; }
   #if PPS_SENSE != OFF

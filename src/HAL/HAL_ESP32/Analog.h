@@ -51,7 +51,7 @@ void __toneStop(void * pvParameters)
   vTaskDelete(NULL);
 }
 
-void tone(uint8_t pin, unsigned int frequency, unsigned long duration = 0)
+__attribute__ ((weak)) void tone(uint8_t pin, unsigned int frequency, unsigned long duration = 0)
 {
   portENTER_CRITICAL(&__analogOutMux);
   int channel=__pwmAllocateChannel(pin);
@@ -64,7 +64,7 @@ void tone(uint8_t pin, unsigned int frequency, unsigned long duration = 0)
   portEXIT_CRITICAL(&__analogOutMux);
 }
 
-void noTone(uint8_t pin)
+__attribute__ ((weak)) void noTone(uint8_t pin)
 {
   portENTER_CRITICAL(&__analogOutMux);
   int channel=__pwmGetChannel(pin);
@@ -77,7 +77,6 @@ void noTone(uint8_t pin)
 }
 
 __attribute__ ((weak)) void analogWrite(uint8_t pin, int value) {
-  Serial.println("Setting the reticule");
   portENTER_CRITICAL(&__analogOutMux);
   int channel=__pwmAllocateChannel(pin,true);  // using option to clear/detach any existing channel for this pin
   if (channel>=0) {
@@ -87,6 +86,6 @@ __attribute__ ((weak)) void analogWrite(uint8_t pin, int value) {
     // just disconnect and go digital if value is 0 or 255
     if (value==0) { noTone(pin); digitalWrite(pin,LOW); }
     if (value==255) { noTone(pin); digitalWrite(pin,HIGH); }
-  }
+  } else log_e("analogWrite, PWM channel in use or unavailable.");
   portEXIT_CRITICAL(&__analogOutMux);
 }

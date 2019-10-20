@@ -3,6 +3,16 @@
 
 #if defined(__AVR_ATmega2560__)
 
+// Misc. pins
+#if defined(ST4_ALTERNATE_PINS_ON) || (PINMAP == ClassicShield)
+  #ifndef DS3234_CS_PIN
+    #define DS3234_CS_PIN      53     // Default CS Pin for DS3234 on SPI
+  #endif
+  #ifndef BME280_CS_PIN
+    #define BME280_CS_PIN      48     // Default CS Pin for BME280 on SPI
+  #endif
+#endif
+
 // The PEC index sense is a 5V logic input, resets the PEC index on rising edge then waits for 60 seconds before allowing another reset
 #define PecPin                2
 #define AnalogPecPin          1
@@ -75,16 +85,16 @@
 #define Axis5DirPin         A12     // Dir
 
 // ST4 interface
-#ifdef ST4_ALTERNATE_PINS_ON
-#define ST4RAw               47     // ST4 RA- West
-#define ST4DEs               43     // ST4 DE- South
-#define ST4DEn               45     // ST4 DE+ North
-#define ST4RAe               49     // ST4 RA+ East
+#if defined(ST4_ALTERNATE_PINS_ON) || (PINMAP == ClassicShield)
+  #define ST4RAw               47     // ST4 RA- West
+  #define ST4DEs               43     // ST4 DE- South
+  #define ST4DEn               45     // ST4 DE+ North
+  #define ST4RAe               49     // ST4 RA+ East
 #else
-#define ST4RAw               47     // ST4 RA- West
-#define ST4DEs               49     // ST4 DE- South
-#define ST4DEn               51     // ST4 DE+ North
-#define ST4RAe               53     // ST4 RA+ East
+  #define ST4RAw               47     // ST4 RA- West
+  #define ST4DEs               49     // ST4 DE- South
+  #define ST4DEn               51     // ST4 DE+ North
+  #define ST4RAe               53     // ST4 RA+ East
 #endif
 
 #elif defined(__MK20DX256__) || defined(__MK64FX512__) || defined(__MK66FX1M0__)
@@ -129,25 +139,25 @@
 #define Axis2DirPin           4     // Dir
 
 // For rotator stepper driver
-#define Axis3DirPin          33     // Dir
-#define Axis3StepPin         30     // Step
 #define Axis3_EN             -1     // Enable
+#define Axis3StepPin         30     // Step
+#define Axis3DirPin          33     // Dir
 
 // For focuser1 stepper driver  
 #if defined(__MK64FX512__) || defined(__MK66FX1M0__)
   // teensy3.5/3.6
-  #define Axis4DirPin        35     // Dir
   #define Axis4StepPin       34     // Step
+  #define Axis4DirPin        35     // Dir
 #else
   // teensy3.2
-  #define Axis4DirPin        32     // Dir
   #define Axis4StepPin       31     // Step
+  #define Axis4DirPin        32     // Dir
 #endif
 #define Axis4_EN             -1     // Enable
 
 // For focuser2 stepper driver
-#define Axis5DirPin          33     // Dir
 #define Axis5StepPin         30     // Step
+#define Axis5DirPin          33     // Dir
 #define Axis5_EN             -1     // Enable
 
 // ST4 interface
